@@ -2,5 +2,6 @@
 #define BASE_INC_H
 
 #include "base_types.h"
+#include "base_macros.h"
 
 #endif

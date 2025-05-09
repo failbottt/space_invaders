@@ -50,6 +50,16 @@ void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row, HMM_M
 UVRect get_sprite_uv(int col, int row);
 void draw_bullet(GLuint program, GLuint vao, float x, float y, float size, HMM_Mat4 projection);
 
+u8 check_aabb_collision(float ax, float ay, float aw, float ah,
+                          float bx, float by, float bw, float bh)
+{
+    return ax < bx + bw &&
+           ax + aw > bx &&
+           ay < by + bh &&
+           ay + ah > by;
+}
+
+
 
 #define MAX_BULLETS 100
 typedef struct {
@@ -184,38 +194,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 
     // bullet and ship shader shaders and program
-    File vert_shader = os_read_file((u8*)"./assets/shaders/vert.glsl");
-    File frag_shader = os_read_file((u8*)"./assets/shaders/frag.glsl");
-    const char* vert_shader_src = (const char*)vert_shader.data;
-    const char* frag_shader_src = (const char*)frag_shader.data;
-    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vs, 1, &vert_shader_src, NULL);
-    glCompileShader(vs);
-    char log[512];
-    GLint success;
-    glGetShaderiv(vs, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(vs, 512, NULL, log);
-        MessageBoxA(NULL, log, "vertex shader compile error\n", MB_OK);
-    }
-    GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fs, 1, &frag_shader_src, NULL);
-    glCompileShader(fs);
-    glGetShaderiv(fs, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(fs, 512, NULL, log);
-        MessageBoxA(NULL, log, "fragment shader compile error\n", MB_OK);
-    }
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vs);
-    glAttachShader(program, fs);
-    glLinkProgram(program);
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-        glGetProgramInfoLog(program, 512, NULL, log);
-        MessageBoxA(NULL, log, "Shader Program Linking Error", MB_OK);
-        return -1;
-    }
+    GLuint program = gfx_create_shader_program(
+            (const char*)"./assets/shaders/vert.glsl",
+            (const char*)"./assets/shaders/frag.glsl"
+            );
 
     HMM_Mat4 projection_mat = HMM_Orthographic_RH_ZO(
             0.0f, (float)SCREEN_WIDTH,         // left → right
@@ -229,16 +211,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     glUniform1f(glGetUniformLocation(program, "uScale"), 32.0f); // 64px triangle (since triangle ranges -1 to +1)
 
 
-
-    // ----------- setup enemies
-
     enemies_program = gfx_create_shader_program(
             (const char*)"./assets/shaders/texture_vert.glsl",
             (const char*)"./assets/shaders/texture_frag.glsl"
             );
-
-    // this is scaling the quad due to how my sprite sheet is setup
-    // it isn't always necessary. It depends on the texture.
 
     gfx_init_quad(&enemies_vao, &enemies_vbo, &enemies_ebo);
 
@@ -288,6 +264,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         LARGE_INTEGER current_time;
         QueryPerformanceCounter(&current_time);
         f32 deltaTime = (f32)(current_time.QuadPart - previous_time.QuadPart) / frequencey.QuadPart;
+        if (deltaTime > 0.05f)
+        {
+            deltaTime = 0.05f;
+        }
         previous_time = current_time;
 
         // FPS
@@ -336,7 +316,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 {
                     bullets[i].x = ship_x_pos;
                     bullets[i].y = ship_y_pos; // from the base of the triangle
-                    bullets[i].velocity = -5.0f;
+                    bullets[i].velocity = -5.0f * deltaTime;
                     bullets[i].active = TRUE;
                     break;
                 }
@@ -380,9 +360,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             draw_bullet(program, bullets_vao, bullets[i].x, bullets[i].y, 8.0f, projection_mat);
         }
 
+        {
+            // check bullet collision
+            for (int b = 0; b < MAX_BULLETS; b++) {
+                if (!bullets[b].active) continue;
+
+                float bx = bullets[b].x - 4 * 0.5f;
+                float by = bullets[b].y - 16 * 0.5f;
+
+                for (int a = 0; a < NUM_ROWS * NUM_COLS; a++) {
+                    if (!aliens[a].alive) continue;
+
+                    float ax = aliens[a].x + alienGroupOffsetX - aliens[0].width;
+                    float ay = aliens[a].y + alienGroupOffsetY - aliens[0].height;
+
+                    u8 bullet_has_collided = check_aabb_collision(ax, ay, aliens[0].width, aliens[0].height, bx, by, 4, 16);
+                    if (bullet_has_collided)
+                    {
+                        aliens[a].alive = FALSE;
+                        bullets[b].active = FALSE;
+
+                        // Optional: score++, sound, flash, etc.
+                        break;  // stop checking this bullet after one hit
+                    }
+                }
+            }
+        }
 
         {
-            // aliens
+            // update and draw aliens
             // Find bounding edges of the living aliens
             float firstAlienX = INFINITY;
             float lastAlienX = -INFINITY;
@@ -426,13 +432,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             }
         }
 
+
         SwapBuffers(hdc);
 
-        QueryPerformanceCounter(&frameEnd);  // at bottom of loop
-        float frameTime = (float)(frameEnd.QuadPart - frameStart.QuadPart) / freq.QuadPart;
-        float sleepTime = TARGET_FRAME_TIME - frameTime;
-        if (sleepTime > 0) {
-            Sleep((DWORD)(sleepTime * 1000.0f));
+        {
+            // fps/sleep
+            QueryPerformanceCounter(&frameEnd);  // at bottom of loop
+            float frameTime = (float)(frameEnd.QuadPart - frameStart.QuadPart) / freq.QuadPart;
+            float sleepTime = TARGET_FRAME_TIME - frameTime;
+            if (sleepTime > 0) {
+                Sleep((DWORD)(sleepTime * 1000.0f));
+            }
         }
     }
 
@@ -469,73 +479,6 @@ void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row, HMM_M
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 }
 
-/*void draw_debug_quad() {*/
-/*    static GLuint vao = 0, vbo = 0, ebo = 0, program = 0;*/
-/**/
-/*    if (program == 0) {*/
-/*        // === SHADERS ===*/
-/*        const char* vsSrc = "#version 330 core\n"*/
-/*            "layout(location = 0) in vec2 aPos;\n"*/
-/*            "void main() {\n"*/
-/*            "  gl_Position = vec4(aPos, 0.0, 1.0);\n"*/
-/*            "}";*/
-/**/
-/*        const char* fsSrc = "#version 330 core\n"*/
-/*            "out vec4 FragColor;\n"*/
-/*            "void main() {\n"*/
-/*            "  FragColor = vec4(1.0, 0.0, 0.0, 1.0);\n"*/
-/*            "}";*/
-/**/
-/*        GLuint vs = glCreateShader(GL_VERTEX_SHADER);*/
-/*        glShaderSource(vs, 1, &vsSrc, NULL);*/
-/*        glCompileShader(vs);*/
-/**/
-/*        GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);*/
-/*        glShaderSource(fs, 1, &fsSrc, NULL);*/
-/*        glCompileShader(fs);*/
-/**/
-/*        program = glCreateProgram();*/
-/*        glAttachShader(program, vs);*/
-/*        glAttachShader(program, fs);*/
-/*        glLinkProgram(program);*/
-/**/
-/*        glDeleteShader(vs);*/
-/*        glDeleteShader(fs);*/
-/**/
-/*        // === VERTEX DATA ===*/
-/*        float vertices[] = {*/
-/*            -0.1f, -0.1f,  // bottom-left*/
-/*             0.1f, -0.1f,  // bottom-right*/
-/*             0.1f,  0.1f,  // top-right*/
-/*            -0.1f,  0.1f   // top-left*/
-/*        };*/
-/**/
-/*        unsigned int indices[] = {*/
-/*            0, 1, 2,*/
-/*            2, 3, 0*/
-/*        };*/
-/**/
-/*        glGenVertexArrays(1, &vao);*/
-/*        glGenBuffers(1, &vbo);*/
-/*        glGenBuffers(1, &ebo);*/
-/**/
-/*        glBindVertexArray(vao);*/
-/*        glBindBuffer(GL_ARRAY_BUFFER, vbo);*/
-/*        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);*/
-/**/
-/*        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);*/
-/*        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);*/
-/**/
-/*        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);*/
-/*        glEnableVertexAttribArray(0);*/
-/*    }*/
-/**/
-/*    // === DRAW ===*/
-/*    glUseProgram(program);*/
-/*    glBindVertexArray(vao);*/
-/*    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);*/
-/*}*/
-
 UVRect get_sprite_uv(int col, int row)
 {
     float uSize = 1.0f / SPRITE_COLS;
@@ -549,7 +492,8 @@ UVRect get_sprite_uv(int col, int row)
     return uv;
 }
 
-void draw_bullet(GLuint program, GLuint vao, float x, float y, float size, HMM_Mat4 projection) {
+void draw_bullet(GLuint program, GLuint vao, float x, float y, float size, HMM_Mat4 projection)
+{
     glUseProgram(program);
 
     glUniformMatrix4fv(glGetUniformLocation(program, "uProjection"), 1, GL_FALSE, (float*)&projection);
