@@ -4,11 +4,10 @@
 #include <stdio.h>
 
 #include "platform.h"
-
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "handmade_math.h"
 
 #include "glcore.h"
+#include "gfx.h"
 
 GLuint enemies_vao = 0, enemies_vbo = 0, enemies_ebo = 0, enemies_program = 0;
 
@@ -17,94 +16,47 @@ LARGE_INTEGER previous_time;
 #define TARGET_FPS 60
 #define TARGET_FRAME_TIME (1.0f / TARGET_FPS)  // = ~0.03333 seconds
 
-#define ALIEN_COLS 3
-#define ALIEN_ROWS 7
-#define ALIEN_HEIGHT 40
-#define ALIEN_WIDTH 40
+#define SPRITE_COLS 3
+#define SPRITE_ROWS 7
+#define SPRITE_SHEET_WIDTH 1024
+#define SPRITE_SHEET_HEIGHT 1536
 
-#define SCREEN_WIDTH 1920
-#define SCREEN_HEIGHT 1080
+#define SPRITE_WIDTH (f32)((f32)SPRITE_SHEET_WIDTH / SPRITE_COLS)
+#define SPRITE_HEIGHT (f32)((f32)SPRITE_SHEET_HEIGHT / SPRITE_ROWS)
 
-#define X(name, type) \
-    name = (type)wglGetProcAddress(#name); \
-    if (!name) { \
-        fprintf(stderr, "Failed to load OpenGL function: %s\n", #name); \
-        return -1; \
-    }
+int NUM_COLS = 10;
+int NUM_ROWS = 5;
 
 typedef struct {
-    float u;     // left
-    float v;     // top
-    float width; // width in UV
-    float height;// height in UV
+    f32 x, y;
+    f32 height, width;
+    u8 alive;
+}Alien;
+
+#define MAX_ALIENS 50
+
+Alien aliens[MAX_ALIENS];
+
+int SCREEN_WIDTH = 0;
+int SCREEN_HEIGHT = 0;
+
+typedef struct {
+    float u0, v0; // top-left
+    float u1, v1; // bottom-right
 } UVRect;
 
 /*void draw_debug_quad();*/
-void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row);
+void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row, HMM_Mat4 projection);
 UVRect get_sprite_uv(int col, int row);
-float pixels_to_ndc_x(float px);
-float pixels_to_ndc_y(float px);
+void draw_bullet(GLuint program, GLuint vao, float x, float y, float size, HMM_Mat4 projection);
 
-PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = 0;
-PFNGLBINDVERTEXARRAYPROC glBindVertexArray = 0;
-PFNGLGENBUFFERSPROC glGenBuffers = 0;
-PFNGLBINDBUFFERPROC glBindBuffer = 0;
-PFNGLBUFFERDATAPROC glBufferData = 0;
-PFNGLCREATESHADERPROC glCreateShader = 0;
-PFNGLSHADERSOURCEPROC glShaderSource = 0;
-PFNGLCOMPILESHADERPROC glCompileShader = 0;
-PFNGLCREATEPROGRAMPROC glCreateProgram = 0;
-PFNGLATTACHSHADERPROC glAttachShader = 0;
-PFNGLLINKPROGRAMPROC glLinkProgram = 0;
-PFNGLUSEPROGRAMPROC glUseProgram = 0;
-PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer = 0;
-PFNGLENABLEVERTEXATTRIBARRAYPROC glEnableVertexAttribArray = 0;
-PFNGLGETSHADERINFOLOGPROC glGetShaderInfoLog = 0;
-PFNGLGETSHADERIVPROC glGetShaderiv = 0;
-PFNGLGETPROGRAMIVPROC glGetProgramiv = 0;
-PFNGLGETPROGRAMINFOLOGPROC glGetProgramInfoLog = 0;
-PFNGLUNIFORM2FPROC glUniform2f = 0;
-PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = 0;
-PFNGLACTIVETEXTUREPROC glActiveTexture = 0;
-PFNGLGENERATEMIPMAPPROC glGenerateMipmap = 0;
-PFNGLUNIFORM1IPROC glUniform1i = 0;
-PFNGLDELETESHADERPROC glDeleteShader = 0;
-
-int LoadOpenGL(void)
-{
-    X(glGenVertexArrays, PFNGLGENVERTEXARRAYSPROC);
-    X(glBindVertexArray, PFNGLBINDVERTEXARRAYPROC);
-    X(glGenBuffers, PFNGLGENBUFFERSPROC);
-    X(glBindBuffer, PFNGLBINDBUFFERPROC);
-    X(glBufferData, PFNGLBUFFERDATAPROC);
-    X(glCreateShader, PFNGLCREATESHADERPROC);
-    X(glShaderSource, PFNGLSHADERSOURCEPROC);
-    X(glCompileShader, PFNGLCOMPILESHADERPROC);
-    X(glCreateProgram, PFNGLCREATEPROGRAMPROC);
-    X(glAttachShader, PFNGLATTACHSHADERPROC);
-    X(glLinkProgram, PFNGLLINKPROGRAMPROC);
-    X(glUseProgram, PFNGLUSEPROGRAMPROC);
-    X(glVertexAttribPointer, PFNGLVERTEXATTRIBPOINTERPROC);
-    X(glEnableVertexAttribArray, PFNGLENABLEVERTEXATTRIBARRAYPROC);
-    X(glGetShaderInfoLog, PFNGLGETSHADERINFOLOGPROC);
-    X(glGetShaderiv, PFNGLGETSHADERIVPROC);
-    X(glGetProgramiv, PFNGLGETPROGRAMIVPROC);
-    X(glGetProgramInfoLog, PFNGLGETPROGRAMINFOLOGPROC);
-    X(glUniform2f, PFNGLUNIFORM2FPROC);
-    X(glGetUniformLocation, PFNGLGETUNIFORMLOCATIONPROC);
-    X(glActiveTexture, PFNGLACTIVETEXTUREPROC);
-    X(glGenerateMipmap, PFNGLGENERATEMIPMAPPROC);
-    X(glUniform1i, PFNGLUNIFORM1IPROC);
-    X(glDeleteShader, PFNGLDELETESHADERPROC);
-
-
-    return 0;
-}
 
 #define MAX_BULLETS 100
 typedef struct {
-    float x, y;
-    int active;
+    u8 active;
+    f32 x;
+    f32 y;
+    f32 velocity;
 } Bullet;
 Bullet bullets[MAX_BULLETS];
 
@@ -129,7 +81,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     // 2. Create window
     HWND hwnd = CreateWindowEx(0, wc.lpszClassName, "OpenGL Window",
                                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                               CW_USEDEFAULT, CW_USEDEFAULT, SCREEN_WIDTH, SCREEN_HEIGHT,
+                               CW_USEDEFAULT, CW_USEDEFAULT, 1920, 1080,
                                NULL, NULL, hInstance, NULL);
 
     HDC hdc = GetDC(hwnd);
@@ -175,21 +127,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     wglMakeCurrent(hdc, realRC);
 
     // Load gl functions
-    if (LoadOpenGL() != 0)
+    if (load_gl_functions() != 0)
     {
         fprintf(stderr, "Could not load all of the opengl functions.\n");
         return -1;
     }
+
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+    SCREEN_WIDTH = rect.right - rect.left;
+    SCREEN_HEIGHT = rect.bottom - rect.top;
+    // glViewPort here
 
     // ship vao/vbo setup
     GLuint vao_ship;
     GLuint ship_vbo;
     glGenVertexArrays(1, &vao_ship);
     glBindVertexArray(vao_ship);
+
     float ship_vertices[] = {
-         0.0f,  0.1f,
-        -0.025f, -0.025f,
-         0.025f, -0.025f
+        0.0f, -1.0f,   // bottom center
+       -1.0f,  1.0f,   // top-left
+        1.0f,  1.0f    // top-right
     };
     glGenBuffers(1, &ship_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, ship_vbo);
@@ -197,17 +156,32 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
+    float bulletVerts[] = {
+        -1.0f, -1.0f,
+        1.0f, -1.0f,
+        1.0f,  1.0f,
+        -1.0f,  1.0f
+    };
+
+    unsigned int bulletIndices[] = {
+        0, 1, 2,
+        2, 3, 0
+    };
+
 
     // bullets vao/vbo setup
-    GLuint bullets_vbo, bullets_vao;
-    glGenBuffers(1, &bullets_vbo);
+    GLuint bullets_vbo, bullets_vao, bullets_ebo;
     glGenVertexArrays(1, &bullets_vao);
     glGenBuffers(1, &bullets_vbo);
+    glGenBuffers(1, &bullets_ebo);
     glBindVertexArray(bullets_vao);
     glBindBuffer(GL_ARRAY_BUFFER, bullets_vbo);
-    // We don't upload data here — we’ll update per bullet in the draw loop
+    glBufferData(GL_ARRAY_BUFFER, sizeof(bulletVerts), bulletVerts, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bullets_ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(bulletIndices), bulletIndices, GL_DYNAMIC_DRAW);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
+
 
     // bullet and ship shader shaders and program
     File vert_shader = os_read_file((u8*)"./assets/shaders/vert.glsl");
@@ -242,125 +216,75 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         MessageBoxA(NULL, log, "Shader Program Linking Error", MB_OK);
         return -1;
     }
-    glUseProgram(program);
 
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2*sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+    HMM_Mat4 projection_mat = HMM_Orthographic_RH_ZO(
+            0.0f, (float)SCREEN_WIDTH,         // left → right
+            (float)SCREEN_HEIGHT, 0.0f,        // bottom → top (Y flipped to match top-left origin)
+            -1.0f, 1.0f                       // near/far
+            );
+
+    glUseProgram(program);
+    glUniformMatrix4fv(glGetUniformLocation(program, "uProjection"), 1, GL_FALSE, (float*)&projection_mat);
+    glUniform2f(glGetUniformLocation(program, "uOffset"), 700.f, 512.f);
+    glUniform1f(glGetUniformLocation(program, "uScale"), 32.0f); // 64px triangle (since triangle ranges -1 to +1)
+
+
 
     // ----------- setup enemies
-    File texture_vert_shader = os_read_file((u8*)"./assets/shaders/texture_vert.glsl");
-    File texture_frag_shader = os_read_file((u8*)"./assets/shaders/texture_frag.glsl");
-    const char* texture_vert_shader_src = (const char*)texture_vert_shader.data;
-    const char* texture_frag_shader_src = (const char*)texture_frag_shader.data;
-    GLuint tvs = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(tvs, 1, &texture_vert_shader_src, NULL);
-    glCompileShader(tvs);
-    char texture_log[512];
-    GLint texture_success;
-    glGetShaderiv(tvs, GL_COMPILE_STATUS, &texture_success);
-    if (!texture_success) {
-        glGetShaderInfoLog(tvs, 512, NULL, texture_log);
-        MessageBoxA(NULL, texture_log, "Texture vertex shader compile error\n", MB_OK);
-    }
-    GLuint tfs = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(tfs, 1, &texture_frag_shader_src, NULL);
-    glCompileShader(tfs);
-    if (!texture_success) {
-        glGetShaderInfoLog(tfs, 512, NULL, texture_log);
-        MessageBoxA(NULL,texture_log, "Texture fragment shader compile error\n", MB_OK);
-    }
-    enemies_program = glCreateProgram();
-    glAttachShader(enemies_program, tvs);
-    glAttachShader(enemies_program, tfs);
-    glLinkProgram(enemies_program);
 
-    glDeleteShader(tvs);
-    glDeleteShader(tfs);
+    enemies_program = gfx_create_shader_program(
+            (const char*)"./assets/shaders/texture_vert.glsl",
+            (const char*)"./assets/shaders/texture_frag.glsl"
+            );
 
     // this is scaling the quad due to how my sprite sheet is setup
     // it isn't always necessary. It depends on the texture.
-    f32 quad_width = pixels_to_ndc_x(ALIEN_WIDTH);
-    f32 quad_height = pixels_to_ndc_y(ALIEN_HEIGHT); // if vert padding is fine don't scale
 
-    f32 vertices[] = {
-        // x, y      u, v
-        -quad_width, -quad_height,  0.0f, 1.0f,
-         quad_width, -quad_height,  1.0f, 1.0f,
-         quad_width,  quad_height,  1.0f, 0.0f,
-        -quad_width,  quad_height,  0.0f, 0.0f
-    };
-    unsigned int indices[] = {
-        0, 1, 2,
-        2, 3, 0
-    };
-    glGenVertexArrays(1, &enemies_vao);
-    glGenBuffers(1, &enemies_vbo);
-    glGenBuffers(1, &enemies_ebo);
-    glBindVertexArray(enemies_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, enemies_vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, enemies_ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);                     // aPos
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));  // aUV
-    glEnableVertexAttribArray(1);
-    // ----------- setup enemies end
+    gfx_init_quad(&enemies_vao, &enemies_vbo, &enemies_ebo);
 
+    GLuint aliens_texture = gfx_create_texture((const char*)"./assets/images/space_invaders_sprite_sheet.png");
 
-    // @TODO: put this into a gfx_load_texture() function
-    int width, height, channels;
-    /*stbi_set_flip_vertically_on_load(1);*/
-
-    const char * sprite_sheet_path = "./assets/images/space_invaders_sprite_sheet.png";
-    unsigned char* data = stbi_load(sprite_sheet_path, &width, &height, &channels, 4);
-    if (!data)
-    {
-        fprintf(stderr, "failed to load %s", sprite_sheet_path);
-        return 1;
-    }
-    fprintf(stderr, "Channels: %d", channels);
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    GLuint aliens_texture;
-    glGenTextures(1, &aliens_texture);
-    glBindTexture(GL_TEXTURE_2D, aliens_texture);
-
-    // set filtering
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    // upload image to GPU
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-
-    stbi_image_free(data);
-
-
-    GLint uOffset = glGetUniformLocation(program, "uOffset");
-    float xPos = 0.0f;
-    float yPos = -0.8f;
-
-    float alienGroupOffsetX = 0.0f;
-    float alienGroupOffsetY = 0.0f;
-    f32 alienGroupDirection = 1.0f;
-    f32 alienGroupSpeed = 0.2f;
-
-    float alienAnimTimer = 0.0f;
-    const float alienAnimInterval = 0.5f;  // change frame every 0.5s
-    int alienAnimFrame = 0;
+    float ship_x_pos = 200.f;
+    float ship_y_pos = (f32)SCREEN_HEIGHT - 40.f;
 
     QueryPerformanceFrequency(&frequencey);
     QueryPerformanceCounter(&previous_time);
 
-    float groupWidth = 10 * .1; // depends on spacing
-    float groupLeft = -0.6f + alienGroupOffsetX;
-    float groupRight = groupLeft + groupWidth;
+    // init bullets
+    for (int i = 0; i < MAX_BULLETS; i++)
+    {
+        bullets[i].active = FALSE;
+    }
+
+    float alienGroupOffsetX = 0.0f;
+    float alienGroupOffsetY = 0.0f;
+    float alien_move_speed = 60.0f;     // pixels per second
+    int alienMoveDirection = 1;       // +1 = right, -1 = left
+    u8 alien_should_drop = 0;
+                                      //
+    f32 ALIEN_SPACING_X = (SPRITE_WIDTH / 4 + 8);
+    f32 total_grid_width = NUM_COLS * ALIEN_SPACING_X;
+    f32 startX = (SCREEN_WIDTH - total_grid_width) / 2;
+
+    f32 ALIEN_SPACING_Y = (SPRITE_HEIGHT / 4 + 8);
+    f32 total_grid_height = NUM_COLS * ALIEN_SPACING_Y;
+    f32 startY = ((SCREEN_HEIGHT - total_grid_height) / 2.0f) - 150.f;
+
+     for (int row = 0; row < NUM_ROWS; row++) {
+        for (int col = 0; col < NUM_COLS; col++) {
+            Alien* a = &aliens[row * NUM_COLS + col];
+            a->x = startX + col * ALIEN_SPACING_X;
+            a->y = startY + row * ALIEN_SPACING_Y;
+            a->alive = TRUE;
+            a->width = SPRITE_WIDTH * .1f;
+            a->height = SPRITE_HEIGHT * .1f;
+        }
+    }
 
     // 8. Main loop
     MSG msg;
-    while (1) {
+    u8 running = 1;
+    while (running) {
         LARGE_INTEGER current_time;
         QueryPerformanceCounter(&current_time);
         f32 deltaTime = (f32)(current_time.QuadPart - previous_time.QuadPart) / frequencey.QuadPart;
@@ -381,23 +305,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         // move player left and right
         if (GetAsyncKeyState(VK_LEFT) & 0x8000)
         {
-            xPos -= 0.01f;
+            ship_x_pos -= 7.f;
         }
         if (GetAsyncKeyState(VK_RIGHT) & 0x8000)
         {
-            xPos += 0.01f;
+            ship_x_pos += 7.f;
+        }
+        if (GetAsyncKeyState(VK_ESCAPE) & 0x8000)
+        {
+            running = 0;
         }
 
-        if (xPos < -0.90f)
+        if (ship_x_pos < 40.f)
         {
-            xPos = -0.9f;
+            ship_x_pos = 40.f;
         }
-        if (xPos > 0.90f)
+        if (ship_x_pos > (float)SCREEN_WIDTH - 120.f)
         {
-            xPos = 0.9f;
+            ship_x_pos = (float)SCREEN_WIDTH - 120.f;
         }
 
-        // define teh bullets
+        // fetch input for bullets
         static SHORT lastSpace = 0;
         SHORT currentSpace = GetAsyncKeyState(VK_SPACE);
         if ((currentSpace & 0x8000) && !(lastSpace & 0x8000))
@@ -406,23 +334,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             {
                 if (!bullets[i].active)
                 {
-                    bullets[i].x = xPos;
-                    bullets[i].y = -0.7f; // from the base of the triangle
-                    bullets[i].active = 1;
+                    bullets[i].x = ship_x_pos;
+                    bullets[i].y = ship_y_pos; // from the base of the triangle
+                    bullets[i].velocity = -5.0f;
+                    bullets[i].active = TRUE;
                     break;
                 }
             }
         }
         lastSpace = currentSpace;
 
-        // move the bullets
-        f32 bullet_speed = 0.04f;
-        for(int i = 0; i < MAX_BULLETS; ++i)
+        // update bullets
+        for (int i = 0; i < MAX_BULLETS; i++)
         {
-            if (bullets[i].active)
+            if (!bullets[i].active) continue;
+
+            bullets[i].y -= 10.0f;
+
+            if (bullets[i].y < -16.f)
             {
-                bullets[i].y += bullet_speed;
-                if (bullets[i].y > 1.1f) bullets[i].active = 0;
+                bullets[i].active = FALSE;
             }
         }
 
@@ -430,51 +361,74 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(program);
 
-        // draw the bullets
-        // note that you have to bind the vertex that you want to draw
-        glUniform2f(uOffset, 0.0f, 0.0f);
-        glBindVertexArray(bullets_vao);
-        for (int i = 0; i < MAX_BULLETS; ++i)
+        // draw ship
+        glBindVertexArray(vao_ship);
+        glUniform2f(glGetUniformLocation(program, "uOffset"), ship_x_pos, ship_y_pos);  // position in pixels
+        glUniform1f(glGetUniformLocation(program, "uScale"), 32.0f);
+        glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, (float*)&projection_mat);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        GLenum err = glGetError();
+        if (err != GL_NO_ERROR) {
+            fprintf(stderr, "GL error: %d\n", err);
+        }
+
+        for (int i = 0; i < MAX_BULLETS; i++)
         {
             if (!bullets[i].active) continue;
 
-            float bullet_verts[] = {
-                bullets[i].x, bullets[i].y,
-                bullets[i].x, bullets[i].y + 0.05f
-            };
-
-            glBindBuffer(GL_ARRAY_BUFFER, bullets_vbo);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(bullet_verts), bullet_verts, GL_DYNAMIC_DRAW);
-            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 *sizeof(float), (void*)0);
-            glEnableVertexAttribArray(0);
-            glDrawArrays(GL_LINES, 0, 2);
+            draw_bullet(program, bullets_vao, bullets[i].x, bullets[i].y, 8.0f, projection_mat);
         }
 
-        // draw ship
-        glBindVertexArray(vao_ship);
-        glUniform2f(uOffset, xPos, -0.8f);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
 
-        for (int row = 0; row < 5; ++row) {
-            for (int col = 0; col < 10; ++col) {
+        {
+            // aliens
+            // Find bounding edges of the living aliens
+            float firstAlienX = INFINITY;
+            float lastAlienX = -INFINITY;
 
-                f32 column_gap = pixels_to_ndc_x(ALIEN_WIDTH * 2.f);
-                f32 row_gap = pixels_to_ndc_y(ALIEN_HEIGHT * 1.75f);
+            for (int i = 0; i < NUM_ROWS * NUM_COLS; i++) {
+                if (!aliens[i].alive) continue;
+                if (aliens[i].x < firstAlienX) firstAlienX = aliens[i].x;
+                if (aliens[i].x > lastAlienX)  lastAlienX = aliens[i].x;
+            }
 
-                f32 xoffset = pixels_to_ndc_x(-400);
-                f32 yoffset = pixels_to_ndc_y(500);
+            // Move horizontally
+            alienGroupOffsetX += alien_move_speed * alienMoveDirection * deltaTime;
 
-                float x = (xoffset + col * column_gap);
-                float y = (yoffset - row * row_gap);
+            if (!alien_should_drop)
+            {
+                // Check for collision with screen edge
+                float leftEdge = alienGroupOffsetX + firstAlienX;
+                float rightEdge = alienGroupOffsetX + lastAlienX + aliens[0].width;
 
-                draw_enemy_sprite(x, y, aliens_texture, 0, 0);
+                if (leftEdge < 20 || rightEdge > SCREEN_WIDTH - 20) {
+                    // Reverse direction
+                    alienMoveDirection *= -1;
+                    alien_should_drop = TRUE;
+                }
+            }
+
+            if (alien_should_drop)
+            {
+                alienGroupOffsetY += aliens[0].height;
+                alien_should_drop = FALSE;
+            }
+
+            for (int i = 0; i < NUM_ROWS * NUM_COLS; i++) {
+                if (!aliens[i].alive) continue;
+
+                float x = aliens[i].x + alienGroupOffsetX;
+                float y = aliens[i].y + alienGroupOffsetY;
+
+
+                draw_enemy_sprite(x, y, aliens_texture, 0, 0, projection_mat);
             }
         }
 
         SwapBuffers(hdc);
 
         QueryPerformanceCounter(&frameEnd);  // at bottom of loop
-
         float frameTime = (float)(frameEnd.QuadPart - frameStart.QuadPart) / freq.QuadPart;
         float sleepTime = TARGET_FRAME_TIME - frameTime;
         if (sleepTime > 0) {
@@ -485,15 +439,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     return 0;
 }
 
-void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row)
+void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row, HMM_Mat4 projection)
 {
-    UVRect sprite = get_sprite_uv(col, row);
+    UVRect uv = get_sprite_uv(col, row);
+
+    float verts[] = {
+        // pos       // uv
+        -1.0f, -1.0f,   uv.u0, uv.v1,
+         1.0f, -1.0f,   uv.u1, uv.v1,
+         1.0f,  1.0f,   uv.u1, uv.v0,
+        -1.0f,  1.0f,   uv.u0, uv.v0
+    };
+
+    glBindBuffer(GL_ARRAY_BUFFER, enemies_vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
 
     glUseProgram(enemies_program);
-    glUniform2f(glGetUniformLocation(enemies_program, "uOffset"), x, y);
+    glUniformMatrix4fv(glGetUniformLocation(enemies_program, "uProjection"), 1, GL_FALSE, (float*)&projection);
+    glUniform2f(glGetUniformLocation(enemies_program, "uOffset"), x, y);                     // center position in pixels
+    glUniform2f(glGetUniformLocation(enemies_program, "uSize"), aliens[0].width, aliens[0].height); // half-size in pixels
+    glUniform4f(glGetUniformLocation(enemies_program, "uColor"), 1.0f, 1.0f, 1.0f, 1.0f);    // no tint
 
-    glUniform2f(glGetUniformLocation(enemies_program, "uUVOffset"), sprite.u, sprite.v);
-    glUniform2f(glGetUniformLocation(enemies_program, "uUVScale"), sprite.width, sprite.height);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -570,25 +536,26 @@ void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row)
 /*    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);*/
 /*}*/
 
-UVRect get_sprite_uv(int col, int row) {
-    UVRect r;
-    float spriteW = 1.0f / (float)ALIEN_COLS;
-    float spriteH = 1.0f / (float)ALIEN_ROWS;
+UVRect get_sprite_uv(int col, int row)
+{
+    float uSize = 1.0f / SPRITE_COLS;
+    float vSize = 1.0f / SPRITE_ROWS;
 
-    r.u = col * spriteW;
-    r.v = 1.0f - (row + 1) * spriteH;
-    r.width = spriteW;
-    r.height = spriteH;
-
-    return r;
+    UVRect uv;
+    uv.u0 = col * uSize;
+    uv.v0 = row * vSize;
+    uv.u1 = uv.u0 + uSize;
+    uv.v1 = uv.v0 + vSize;
+    return uv;
 }
 
-float pixels_to_ndc_x(float px)
-{
-    return px * (2.0f / (float)SCREEN_WIDTH);
-}
+void draw_bullet(GLuint program, GLuint vao, float x, float y, float size, HMM_Mat4 projection) {
+    glUseProgram(program);
 
-float pixels_to_ndc_y(float px)
-{
-    return px * (2.0f / (float)SCREEN_HEIGHT);
+    glUniformMatrix4fv(glGetUniformLocation(program, "uProjection"), 1, GL_FALSE, (float*)&projection);
+    glUniform2f(glGetUniformLocation(program, "uOffset"), x, y);
+    glUniform1f(glGetUniformLocation(program, "uScale"), size * 0.5f);  // uniform scale: width = size, height = size
+
+    glBindVertexArray(vao);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 }

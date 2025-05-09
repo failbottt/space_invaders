@@ -7,6 +7,9 @@
 #define local_persist static
 #define global_variable static
 
+#define FALSE 0
+#define TRUE 1
+
 typedef int8_t      s8;
 typedef int16_t     s16;
 typedef int32_t     s32;

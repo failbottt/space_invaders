@@ -16,6 +16,10 @@
 
 int load_gl_functions(void);
 
+typedef long long GLsizeiptr;
+typedef long long GLintptr;
+
+
 // src: https://registry.khronos.org/OpenGL-Refpages/gl4/
 // typedef void (APIENTRYP PFNGLPROC)();
 //
@@ -25,6 +29,7 @@ typedef void (APIENTRYP PFNGLBINDVERTEXARRAYPROC)(GLuint);
 typedef void (APIENTRYP PFNGLGENBUFFERSPROC)(GLsizei, GLuint *);
 typedef void (APIENTRYP PFNGLBINDBUFFERPROC)(GLenum, GLuint);
 typedef void (APIENTRYP PFNGLBUFFERDATAPROC)(GLenum, ptrdiff_t, const void *, GLenum);
+typedef void (APIENTRYP PFNGLBUFFERSUBDATAPROC)(GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid*);
 
 // Shaders
 typedef GLuint (APIENTRYP PFNGLCREATESHADERPROC)(GLenum);
@@ -49,11 +54,16 @@ typedef GLint (APIENTRYP PFNGLGETUNIFORMLOCATIONPROC)(GLuint, const char *);
 typedef void (APIENTRYP PFNGLUNIFORM1IPROC)(GLint, GLint);
 typedef void (APIENTRYP PFNGLUNIFORMMATRIX4FVPROC)(GLint, GLsizei, GLboolean, const GLfloat *);
 typedef void (APIENTRYP PFNGLUNIFORM2FPROC)(GLint, GLfloat, GLfloat);
+typedef void (APIENTRYP PFNGLUNIFORM1FPROC)(GLint, GLfloat);
+typedef void (APIENTRYP PFNGLUNIFORM4FPROC)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
 
 // Textures
 typedef void (APIENTRYP PFNGLACTIVETEXTUREPROC)(GLenum texture);
 typedef void (APIENTRYP PFNGLGENERATEMIPMAPPROC)(GLenum target);
 typedef void (APIENTRYP PFNGLUNIFORM1IPROC)(GLint, GLint);
+
+// Matrix
+typedef void (APIENTRYP PFNGLUNIFORMMATRIX4FV)(GLint, GLsizei, GLboolean, const GLfloat*);
 
 // WGL Extensions
 typedef HGLRC (WINAPI *wglCreateContextAttribsARBProc)(HDC, HGLRC, const int *);

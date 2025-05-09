@@ -1,9 +1,12 @@
-#version 440 core
-
+#version 330 core
 layout(location = 0) in vec2 aPos;
 
+uniform mat4 uProjection;
 uniform vec2 uOffset;
+uniform float uScale;
 
 void main() {
-    gl_Position = vec4(aPos + uOffset, 0.0, 1.0);
+    vec2 scaledPos = aPos * uScale;
+    vec2 worldPos = scaledPos + uOffset;
+    gl_Position = uProjection * vec4(worldPos, 0.0, 1.0);
 }
