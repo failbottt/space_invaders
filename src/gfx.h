@@ -1,3 +1,6 @@
+#ifndef GFX_H
+#define GFX_H
+
 #include "glcore.h"
 
 extern PFNGLGENVERTEXARRAYSPROC glGenVertexArrays;
@@ -33,3 +36,5 @@ int load_open_gl(void);
 void gfx_init_quad(GLuint* vao_out, GLuint* vbo_out, GLuint* ebo_out);
 GLuint gfx_create_texture(const char *image_path);
 GLuint gfx_create_shader_program(const char* vert_shader_path, const char* frag_shader_path);
+
+#endif

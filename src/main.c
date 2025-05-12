@@ -9,6 +9,17 @@
 #include "glcore.h"
 #include "gfx.h"
 
+// input
+#define KEY_COUNT 256
+typedef struct {
+    u8 down[KEY_COUNT];
+    u8 pressed[KEY_COUNT];
+    u8 released[KEY_COUNT];
+} Input;
+
+Input input = {0};
+Input previous_input = {0};
+
 GLuint enemies_vao = 0, enemies_vbo = 0, enemies_ebo = 0, enemies_program = 0;
 
 LARGE_INTEGER frequencey;
@@ -41,17 +52,17 @@ int SCREEN_WIDTH = 0;
 int SCREEN_HEIGHT = 0;
 
 typedef struct {
-    float u0, v0; // top-left
-    float u1, v1; // bottom-right
+    f32 u0, v0; // top-left
+    f32 u1, v1; // bottom-right
 } UVRect;
 
 /*void draw_debug_quad();*/
-void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row, HMM_Mat4 projection);
+void draw_enemy_sprite(f32 x, f32 y, GLuint texture, int col, int row, HMM_Mat4 projection);
 UVRect get_sprite_uv(int col, int row);
-void draw_bullet(GLuint program, GLuint vao, float x, float y, float size, HMM_Mat4 projection);
+void draw_bullet(GLuint program, GLuint vao, f32 x, f32 y, f32 size, HMM_Mat4 projection);
 
-u8 check_aabb_collision(float ax, float ay, float aw, float ah,
-                          float bx, float by, float bw, float bh)
+u8 check_aabb_collision(f32 ax, f32 ay, f32 aw, f32 ah,
+                          f32 bx, f32 by, f32 bw, f32 bh)
 {
     return ax < bx + bw &&
            ax + aw > bx &&
@@ -76,6 +87,55 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
+
+
+void win32_process_pending_messages()
+{
+    MSG Message;
+    while(PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
+    {
+        switch(Message.message)
+        {
+            case WM_QUIT:
+            {
+                // TODO: Handle this with a message to the user?
+                /*GlobalRunning = 0;*/
+            } break;
+
+            case WM_SYSKEYDOWN:
+            case WM_KEYDOWN:
+            {
+                u32 vkcode = (u32) Message.wParam;
+                if (vkcode < KEY_COUNT)
+                {
+                    if (!input.down[vkcode])
+                    {
+                        input.pressed[vkcode] = TRUE;
+                    }
+                    input.down[vkcode] = TRUE;
+                }
+            } break;
+
+            case WM_SYSKEYUP:
+            case WM_KEYUP:
+            {
+                u32 vkcode = (u32) Message.wParam;
+                if (vkcode < KEY_COUNT)
+                {
+                    input.down[vkcode] = FALSE;
+                    input.released[vkcode] = FALSE;
+                }
+            } break;
+
+            default:
+            {
+                TranslateMessage(&Message);
+                DispatchMessageA(&Message);
+            } break;
+        }
+    }
+
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
@@ -155,7 +215,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     glGenVertexArrays(1, &vao_ship);
     glBindVertexArray(vao_ship);
 
-    float ship_vertices[] = {
+    f32 ship_vertices[] = {
         0.0f, -1.0f,   // bottom center
        -1.0f,  1.0f,   // top-left
         1.0f,  1.0f    // top-right
@@ -163,10 +223,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     glGenBuffers(1, &ship_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, ship_vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(ship_vertices), ship_vertices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(f32), (void*)0);
     glEnableVertexAttribArray(0);
 
-    float bulletVerts[] = {
+    f32 bulletVerts[] = {
         -1.0f, -1.0f,
         1.0f, -1.0f,
         1.0f,  1.0f,
@@ -189,7 +249,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     glBufferData(GL_ARRAY_BUFFER, sizeof(bulletVerts), bulletVerts, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bullets_ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(bulletIndices), bulletIndices, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(f32), (void*)0);
     glEnableVertexAttribArray(0);
 
 
@@ -200,13 +260,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             );
 
     HMM_Mat4 projection_mat = HMM_Orthographic_RH_ZO(
-            0.0f, (float)SCREEN_WIDTH,         // left → right
-            (float)SCREEN_HEIGHT, 0.0f,        // bottom → top (Y flipped to match top-left origin)
+            0.0f, (f32)SCREEN_WIDTH,         // left → right
+            (f32)SCREEN_HEIGHT, 0.0f,        // bottom → top (Y flipped to match top-left origin)
             -1.0f, 1.0f                       // near/far
             );
 
     glUseProgram(program);
-    glUniformMatrix4fv(glGetUniformLocation(program, "uProjection"), 1, GL_FALSE, (float*)&projection_mat);
+    glUniformMatrix4fv(glGetUniformLocation(program, "uProjection"), 1, GL_FALSE, (f32*)&projection_mat);
     glUniform2f(glGetUniformLocation(program, "uOffset"), 700.f, 512.f);
     glUniform1f(glGetUniformLocation(program, "uScale"), 32.0f); // 64px triangle (since triangle ranges -1 to +1)
 
@@ -220,8 +280,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     GLuint aliens_texture = gfx_create_texture((const char*)"./assets/images/space_invaders_sprite_sheet.png");
 
-    float ship_x_pos = 200.f;
-    float ship_y_pos = (f32)SCREEN_HEIGHT - 40.f;
+    f32 ship_x_pos = 200.f;
+    f32 ship_y_pos = (f32)SCREEN_HEIGHT - 40.f;
 
     QueryPerformanceFrequency(&frequencey);
     QueryPerformanceCounter(&previous_time);
@@ -232,9 +292,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         bullets[i].active = FALSE;
     }
 
-    float alienGroupOffsetX = 0.0f;
-    float alienGroupOffsetY = 0.0f;
-    float alien_move_speed = 60.0f;     // pixels per second
+    f32 alienGroupOffsetX = 0.0f;
+    f32 alienGroupOffsetY = 0.0f;
+    f32 alien_move_speed = 60.0f;     // pixels per second
     int alienMoveDirection = 1;       // +1 = right, -1 = left
     u8 alien_should_drop = 0;
                                       //
@@ -270,28 +330,30 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
         previous_time = current_time;
 
+
+        memcpy(previous_input.down, input.down, sizeof(input.down));
+        memset(input.pressed, 0, sizeof(input.pressed));
+        memset(input.released, 0, sizeof(input.released));
+
+
+        win32_process_pending_messages();
+
         // FPS
         LARGE_INTEGER freq, frameStart, frameEnd;
         QueryPerformanceFrequency(&freq);
         QueryPerformanceCounter(&frameStart);  // at top of loop
-
-        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT)
-                return 0;
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
-
+                                               //
         // move player left and right
-        if (GetAsyncKeyState(VK_LEFT) & 0x8000)
+        if (input.down[VK_LEFT])
         {
-            ship_x_pos -= 7.f;
+            ship_x_pos -= 500.f * deltaTime;
         }
-        if (GetAsyncKeyState(VK_RIGHT) & 0x8000)
+
+        if (input.down[VK_RIGHT])
         {
-            ship_x_pos += 7.f;
+            ship_x_pos += 500.f * deltaTime;
         }
-        if (GetAsyncKeyState(VK_ESCAPE) & 0x8000)
+        if (input.down[VK_ESCAPE])
         {
             running = 0;
         }
@@ -300,9 +362,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         {
             ship_x_pos = 40.f;
         }
-        if (ship_x_pos > (float)SCREEN_WIDTH - 120.f)
+        if (ship_x_pos > (f32)SCREEN_WIDTH - 120.f)
         {
-            ship_x_pos = (float)SCREEN_WIDTH - 120.f;
+            ship_x_pos = (f32)SCREEN_WIDTH - 120.f;
         }
 
         // fetch input for bullets
@@ -345,7 +407,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         glBindVertexArray(vao_ship);
         glUniform2f(glGetUniformLocation(program, "uOffset"), ship_x_pos, ship_y_pos);  // position in pixels
         glUniform1f(glGetUniformLocation(program, "uScale"), 32.0f);
-        glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, (float*)&projection_mat);
+        glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, (f32*)&projection_mat);
         glDrawArrays(GL_TRIANGLES, 0, 3);
 
         GLenum err = glGetError();
@@ -365,14 +427,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             for (int b = 0; b < MAX_BULLETS; b++) {
                 if (!bullets[b].active) continue;
 
-                float bx = bullets[b].x - 4 * 0.5f;
-                float by = bullets[b].y - 16 * 0.5f;
+                f32 bx = bullets[b].x - 4 * 0.5f;
+                f32 by = bullets[b].y - 16 * 0.5f;
 
                 for (int a = 0; a < NUM_ROWS * NUM_COLS; a++) {
                     if (!aliens[a].alive) continue;
 
-                    float ax = aliens[a].x + alienGroupOffsetX - aliens[0].width;
-                    float ay = aliens[a].y + alienGroupOffsetY - aliens[0].height;
+                    f32 ax = aliens[a].x + alienGroupOffsetX - aliens[0].width;
+                    f32 ay = aliens[a].y + alienGroupOffsetY - aliens[0].height;
 
                     u8 bullet_has_collided = check_aabb_collision(ax, ay, aliens[0].width, aliens[0].height, bx, by, 4, 16);
                     if (bullet_has_collided)
@@ -390,8 +452,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         {
             // update and draw aliens
             // Find bounding edges of the living aliens
-            float firstAlienX = INFINITY;
-            float lastAlienX = -INFINITY;
+            f32 firstAlienX = INFINITY;
+            f32 lastAlienX = -INFINITY;
 
             for (int i = 0; i < NUM_ROWS * NUM_COLS; i++) {
                 if (!aliens[i].alive) continue;
@@ -405,8 +467,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             if (!alien_should_drop)
             {
                 // Check for collision with screen edge
-                float leftEdge = alienGroupOffsetX + firstAlienX;
-                float rightEdge = alienGroupOffsetX + lastAlienX + aliens[0].width;
+                f32 leftEdge = alienGroupOffsetX + firstAlienX;
+                f32 rightEdge = alienGroupOffsetX + lastAlienX + aliens[0].width;
 
                 if (leftEdge < 20 || rightEdge > SCREEN_WIDTH - 20) {
                     // Reverse direction
@@ -424,8 +486,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             for (int i = 0; i < NUM_ROWS * NUM_COLS; i++) {
                 if (!aliens[i].alive) continue;
 
-                float x = aliens[i].x + alienGroupOffsetX;
-                float y = aliens[i].y + alienGroupOffsetY;
+                f32 x = aliens[i].x + alienGroupOffsetX;
+                f32 y = aliens[i].y + alienGroupOffsetY;
 
 
                 draw_enemy_sprite(x, y, aliens_texture, 0, 0, projection_mat);
@@ -435,25 +497,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
         SwapBuffers(hdc);
 
-        {
-            // fps/sleep
-            QueryPerformanceCounter(&frameEnd);  // at bottom of loop
-            float frameTime = (float)(frameEnd.QuadPart - frameStart.QuadPart) / freq.QuadPart;
-            float sleepTime = TARGET_FRAME_TIME - frameTime;
-            if (sleepTime > 0) {
-                Sleep((DWORD)(sleepTime * 1000.0f));
-            }
-        }
+        /*{*/
+        /*    // fps/sleep*/
+        /*    QueryPerformanceCounter(&frameEnd);  // at bottom of loop*/
+        /*    f32 frameTime = (f32)(frameEnd.QuadPart - frameStart.QuadPart) / freq.QuadPart;*/
+        /*    fprintf(stderr, "FRAME_TIME: %f\n", frameTime);*/
+        /*    f32 sleepTime = TARGET_FRAME_TIME - frameTime;*/
+        /*    if (sleepTime > 0) {*/
+        /*        fprintf(stderr, "SLEEP_TIME: %f\n", sleepTime);*/
+        /*        Sleep((DWORD)(sleepTime * 1000.0f));*/
+        /*    }*/
+        /*}*/
     }
 
     return 0;
 }
 
-void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row, HMM_Mat4 projection)
+void draw_enemy_sprite(f32 x, f32 y, GLuint texture, int col, int row, HMM_Mat4 projection)
 {
     UVRect uv = get_sprite_uv(col, row);
 
-    float verts[] = {
+    f32 verts[] = {
         // pos       // uv
         -1.0f, -1.0f,   uv.u0, uv.v1,
          1.0f, -1.0f,   uv.u1, uv.v1,
@@ -465,7 +529,7 @@ void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row, HMM_M
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
 
     glUseProgram(enemies_program);
-    glUniformMatrix4fv(glGetUniformLocation(enemies_program, "uProjection"), 1, GL_FALSE, (float*)&projection);
+    glUniformMatrix4fv(glGetUniformLocation(enemies_program, "uProjection"), 1, GL_FALSE, (f32*)&projection);
     glUniform2f(glGetUniformLocation(enemies_program, "uOffset"), x, y);                     // center position in pixels
     glUniform2f(glGetUniformLocation(enemies_program, "uSize"), aliens[0].width, aliens[0].height); // half-size in pixels
     glUniform4f(glGetUniformLocation(enemies_program, "uColor"), 1.0f, 1.0f, 1.0f, 1.0f);    // no tint
@@ -481,8 +545,8 @@ void draw_enemy_sprite(float x, float y, GLuint texture, int col, int row, HMM_M
 
 UVRect get_sprite_uv(int col, int row)
 {
-    float uSize = 1.0f / SPRITE_COLS;
-    float vSize = 1.0f / SPRITE_ROWS;
+    f32 uSize = 1.0f / SPRITE_COLS;
+    f32 vSize = 1.0f / SPRITE_ROWS;
 
     UVRect uv;
     uv.u0 = col * uSize;
@@ -492,11 +556,11 @@ UVRect get_sprite_uv(int col, int row)
     return uv;
 }
 
-void draw_bullet(GLuint program, GLuint vao, float x, float y, float size, HMM_Mat4 projection)
+void draw_bullet(GLuint program, GLuint vao, f32 x, f32 y, f32 size, HMM_Mat4 projection)
 {
     glUseProgram(program);
 
-    glUniformMatrix4fv(glGetUniformLocation(program, "uProjection"), 1, GL_FALSE, (float*)&projection);
+    glUniformMatrix4fv(glGetUniformLocation(program, "uProjection"), 1, GL_FALSE, (f32*)&projection);
     glUniform2f(glGetUniformLocation(program, "uOffset"), x, y);
     glUniform1f(glGetUniformLocation(program, "uScale"), size * 0.5f);  // uniform scale: width = size, height = size
 
